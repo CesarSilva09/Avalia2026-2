@@ -65,6 +65,7 @@ desenvolvimento (um deles dedicado a **teste e validação**), o **harness** em 
   - Verificação estática do frontend (sem frameworks/CDN, sem `innerHTML`, labels, rodapé) e `node validar-local.mjs`.
 - **Achados que geraram ajuste:** o contrato não dizia sobre qual texto a assinatura HMAC é calculada; o orquestrador acrescentou isso ao `docs/API.md`.
 - **Limites declarados pelo próprio agente:** não testou o login com o Discord real (exige credenciais), o ambiente remoto nem a interface no navegador.
+- **Complemento manual após o deploy:** esses pontos foram cobertos por teste manual do estudante com um colega em `https://avalia2026-2-4sy.pages.dev`: login real via Discord com dois usuários, entrada na lista pelo código, tarefas e subtarefas criadas e atribuídas, atualização em tempo real entre os dois navegadores, sessão mantida após recarregar (F5) e dados persistidos no D1 remoto. O `validar-local.mjs` passou nos 9 itens, incluindo o deploy online.
 
 ---
 
