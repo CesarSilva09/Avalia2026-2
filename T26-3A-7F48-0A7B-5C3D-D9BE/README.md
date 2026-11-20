@@ -4,7 +4,7 @@
 - **Estudante:** Cesar Augusto Silva
 - **Turma:** 3A
 - **Chave Única:** `T26-3A-7F48-0A7B-5C3D-D9BE`
-- **URL_CLOUDFLARE:** `https://t26-3a-7f48-0a7b-5c3d-d9be.pages.dev` *(Atualize com a URL pública real do seu deploy na Cloudflare antes de abrir o Pull Request)*
+- **URL_CLOUDFLARE:** `https://avalia2026-2-4sy.pages.dev`
 
 ---
 
@@ -40,7 +40,7 @@ A aplicação consiste em um Painel de Check-in e Diagnóstico de Entrega constr
    - Na aba **OAuth2**:
      - Copie o **Client ID** e gere o **Client Secret**.
      - Em **Redirects**, adicione a URL exata do deploy:
-       `https://t26-3a-7f48-0a7b-5c3d-d9be.pages.dev/api/auth/discord/callback`
+       `https://avalia2026-2-4sy.pages.dev/api/auth/discord/callback`
    - No painel do seu projeto no Cloudflare Pages:
      - Acesse **Settings** → **Environment variables**.
      - Adicione as variáveis de ambiente:
