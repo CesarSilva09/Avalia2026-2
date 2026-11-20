@@ -4,7 +4,7 @@
 - **Estudante:** Cesar Augusto Silva
 - **Turma:** 3A
 - **Chave Única:** `P26-3A-8F79-F6CA-8535-422A`
-- **URL_CLOUDFLARE:** `https://p26-3a-8f79-f6ca-8535-422a.pages.dev` *(Atualize com a URL pública real do seu deploy na Cloudflare antes de abrir o Pull Request)*
+- **URL_CLOUDFLARE:** `https://avalia2026-2-4sy.pages.dev`
 
 ---
 
@@ -71,7 +71,7 @@ Os testes da API estão descritos em [`tests/README.md`](./tests/README.md).
    - Na aba **OAuth2**:
      - Copie o **Client ID** e gere o **Client Secret**.
      - Em **Redirects**, adicione a URL exata do deploy:
-       `https://p26-3a-8f79-f6ca-8535-422a.pages.dev/api/auth/discord/callback`
+       `https://avalia2026-2-4sy.pages.dev/api/auth/discord/callback`
    - No painel do seu projeto no Cloudflare Pages:
      - Acesse **Settings** → **Environment variables**.
      - Adicione as variáveis de ambiente:
