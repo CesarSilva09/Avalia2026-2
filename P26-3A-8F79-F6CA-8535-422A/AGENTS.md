@@ -69,7 +69,21 @@ desenvolvimento (um deles dedicado a **teste e validação**), o **harness** em 
 
 ---
 
-## 3. Skills (`skills/`)
+## 3. Segunda Rodada: Melhorias Após o Diagnóstico do PR
+
+Depois do primeiro deploy, os três agentes já estavam registrados no Claude Code e foram chamados **diretamente pelo nome** (`subagent_type: backend-serverless`, `frontend-vanilla`, `teste-validacao`). O fluxo se repetiu: contrato primeiro, backend e frontend em paralelo, teste por último, e os achados do teste voltaram para o agente responsável.
+
+1. **Orquestrador:** acrescentou ao `docs/API.md` a rota `DELETE /api/lists/:id/members/:userId` (sair da lista / dono remove membro).
+2. **`backend-serverless`:** criou `functions/api/lists/[id]/members/[userId].js` (sair, remover, 403/404/409, tarefas do removido ficam sem responsável num único `DB.batch`), sem mudar o esquema do D1 em produção. Verificou em banco local isolado.
+3. **`frontend-vanilla`** (em paralelo): edição de título de tarefa e subtarefa, botões "Sair da lista" e "Remover" (com `confirm()`), indicador "Atualizado há X s" fora da região `aria-live`, destaque das tarefas alteradas por colegas (respeitando `prefers-reduced-motion`) e aviso "N alterações feitas por colegas".
+4. **`teste-validacao`:** ampliou a suíte para **58 testes** (rota nova e edição de título). Na primeira execução, encontrou um problema real, que voltou para os outros agentes:
+   - **Maleabilidade da assinatura da sessão:** o último caractere base64url da assinatura HMAC tem 2 bits de preenchimento ignorados por `atob()`, então a mesma assinatura era aceita em até 4 grafias (e com `=`). Não permitia forjar sessão, mas deixava o teste "assinatura adulterada" instável. → **`backend-serverless`** passou a aceitar só a grafia canônica em `readSession` (`functions/_lib.js`), sem invalidar sessões já emitidas.
+   - **Três fluxos de erro 404 na interface** (sair/remover/editar quando o item já tinha sumido por ação de um colega) deixavam a tela desatualizada até a próxima recarga. → **`frontend-vanilla`** passou a voltar ao painel ou recarregar na hora, mantendo a mensagem do servidor.
+5. **`teste-validacao` (revalidação):** acrescentou o teste de maleabilidade e rodou tudo de novo: **59 testes, 59 aprovados em duas execuções seguidas, nenhuma resposta 5xx**; `validar-local.mjs` 9/9.
+
+---
+
+## 4. Skills (`skills/`)
 
 | Skill | Usada por | Origem |
 | --- | --- | --- |

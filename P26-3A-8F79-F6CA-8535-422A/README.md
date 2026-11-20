@@ -20,7 +20,9 @@ No Cloudflare D1, o esquema relacional deve contemplar tabelas para usuários, l
 
 - Login exclusivo com **Discord OAuth2** (importa `user_id`, nome e avatar), com `state` anti-CSRF e sessão em cookie `HttpOnly` assinado com HMAC-SHA256.
 - Criar listas e **compartilhar o código de acesso**; colegas entram com o código e passam a ver e editar os mesmos itens.
-- Tarefas com **subtarefas**, **responsável** (avatar do Discord exibido no item), **status de conclusão** e exclusão; cada ação é salva no servidor e a lista aberta se atualiza a cada 5 s para mostrar as mudanças dos colegas.
+- Tarefas com **subtarefas**, **responsável** (avatar do Discord exibido no item), **status de conclusão**, **edição do título** e exclusão; cada ação é salva no servidor.
+- **Colaboração em tempo real:** a lista aberta se atualiza a cada 5 s, mostra "Atualizado há X s", destaca os itens alterados por colegas e avisa quantas alterações chegaram.
+- **Gestão de membros:** qualquer membro pode **sair da lista**; o dono pode **remover membros** (as tarefas do removido ficam sem responsável e ele perde o acesso na hora).
 - Todas as regras validadas no servidor: só membros acessam a lista, o responsável precisa ser membro, a subtarefa pertence à mesma lista, limites de texto e respostas de erro sem detalhes internos.
 
 ## Arquitetura

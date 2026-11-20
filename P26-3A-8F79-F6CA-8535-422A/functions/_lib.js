@@ -68,6 +68,8 @@ export async function readSession(request, env) {
   const [payload, sig, extra] = raw.split(".");
   if (!payload || !sig || extra !== undefined) return null;
   try {
+    // só a grafia canônica (atob ignora bits de preenchimento e "="): uma sessão = um cookie
+    if (sig.length !== 43 || ![payload, sig].every((s) => /^[A-Za-z0-9_-]+$/.test(s) && b64url(unb64url(s)) === s)) return null;
     const ok = await crypto.subtle.verify("HMAC", key, unb64url(sig), enc.encode(payload));
     if (!ok) return null;
     const { uid, exp } = JSON.parse(new TextDecoder().decode(unb64url(payload)));

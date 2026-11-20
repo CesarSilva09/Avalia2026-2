@@ -25,3 +25,12 @@ Cobre: sessão ausente/adulterada/expirada/malformada, isolamento entre listas, 
 (inválido, repetido, concorrente), responsável não membro, subtarefa de outra lista e sub-subtarefa,
 limites de título/nome, `done` booleano, fluxo com dois usuários, DELETE em cascata, 405, injeção SQL/HTML
 armazenada literalmente, início do OAuth (302 + `state`) e nenhuma resposta 5xx.
+
+Também cobre (58 testes no total) a edição de título (`PATCH title`: trim, vazio, 201 caracteres, falha sem gravar
+parcialmente, novo título visto pelo outro membro) e `DELETE /api/lists/:id/members/:userId`: 401, ids inválidos,
+405, não membro 404, membro removendo outro ou o dono 403, dono saindo 409, alvo não membro 404, saída e remoção
+204 com perda imediata de acesso, tarefas do removido com `assignee: null` (demais e outras listas intactas),
+atribuir ao removido 400 e reentrada pelo código. O seed inclui um quinto usuário (`teste_carla`).
+
+Observação: para adulterar a assinatura troque um caractere do meio. O último caractere de uma assinatura
+base64url de 32 bytes tem 2 bits de preenchimento que `atob()` ignora; trocar A por B ali gera a mesma assinatura.

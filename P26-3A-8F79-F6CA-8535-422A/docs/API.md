@@ -42,6 +42,14 @@ Task   { "id": 10, "parentId": null, "title": "Escrever intro", "done": false, "
 | `POST /api/lists/:id/tasks` | `{ "title", "parentId"?, "assigneeId"? }` | 201 `{ "task": Task }` |
 | `PATCH /api/tasks/:id` | qualquer de `{ "title", "done", "assigneeId" }` (`assigneeId: null` remove) | 200 `{ "task": Task }` |
 | `DELETE /api/tasks/:id` | — | 204 |
+| `DELETE /api/lists/:id/members/:userId` | — | 204 (sair da lista ou remover membro; ver regras abaixo) |
+
+Membros (`DELETE /api/lists/:id/members/:userId`):
+- `userId` igual ao usuário da sessão = **sair da lista**. O dono não pode sair → 409.
+- `userId` de outro usuário = **remover membro**: só o dono pode → 403 para quem não é dono; o dono não pode ser removido → 409.
+- Quem chama precisa ser membro da lista (senão 404); o alvo precisa ser membro (senão 404).
+- Na mesma operação (`DB.batch`), as tarefas da lista atribuídas ao removido ficam sem responsável (`assignee_id = NULL`).
+  O removido perde o acesso imediatamente (as rotas da lista passam a responder 404 para ele).
 
 Regras validadas no servidor: sessão válida em toda rota (exceto login); só membros da lista leem ou alteram;
 `title` 1–200 caracteres após `trim`; `done` booleano; `assigneeId` precisa ser membro da lista;

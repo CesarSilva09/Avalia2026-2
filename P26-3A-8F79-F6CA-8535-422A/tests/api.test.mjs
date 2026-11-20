@@ -17,6 +17,7 @@ const ANA = "999900000000000001";
 const BRUNO = "999900000000000002";
 const INTRUSO = "999900000000000003";
 const OREILLY = "999900000000000004";
+const CARLA = "999900000000000005";
 const FANTASMA = "999900000000000099"; // não existe em users
 
 // ---------- sessão ----------
@@ -32,6 +33,13 @@ async function sign(data, secret = SECRET) {
 async function sessao(uid, { exp = Math.floor(Date.now() / 1000) + 3600, secret = SECRET, payload } = {}) {
   const p = b64url(enc.encode(JSON.stringify(payload ?? { uid, exp })));
   return `session=${p}.${await sign(p, secret)}`;
+}
+
+// Troca um caractere no MEIO da assinatura. Não usar o último: em 32 bytes base64url o último caractere
+// tem 2 bits de preenchimento que atob() ignora, então trocar A↔B no fim gera a MESMA assinatura.
+function adulterar(cookie) {
+  const i = cookie.indexOf(".") + 10;
+  return cookie.slice(0, i) + (cookie[i] === "A" ? "B" : "A") + cookie.slice(i + 1);
 }
 
 // ---------- HTTP ----------
@@ -61,7 +69,7 @@ let C = {}; // cookies por usuário
 
 before(async () => {
   C = {
-    ana: await sessao(ANA), bruno: await sessao(BRUNO), intruso: await sessao(INTRUSO), oreilly: await sessao(OREILLY),
+    ana: await sessao(ANA), bruno: await sessao(BRUNO), intruso: await sessao(INTRUSO), oreilly: await sessao(OREILLY), carla: await sessao(CARLA),
   };
   const r = await req("GET", "/api/me", { cookie: C.ana });
   assert.equal(r.status, 200, `Servidor inacessível ou usuários de teste ausentes (rode tests/seed.sql). ${r.status} ${r.text.slice(0, 200)}`);
@@ -89,6 +97,7 @@ describe("Sessão", () => {
   const rotas = [
     ["GET", "/api/me"], ["GET", "/api/lists"], ["POST", "/api/lists", { name: "x" }], ["POST", "/api/lists/join", { code: "AAAAAAAA" }],
     ["GET", "/api/lists/1"], ["POST", "/api/lists/1/tasks", { title: "x" }], ["PATCH", "/api/tasks/1", { done: true }], ["DELETE", "/api/tasks/1"],
+    ["DELETE", "/api/lists/1/members/1"],
   ];
 
   test("sem cookie → 401 em todas as rotas protegidas", async () => {
@@ -97,8 +106,7 @@ describe("Sessão", () => {
 
   test("assinatura adulterada → 401", async () => {
     const c = C.ana;
-    const ultimo = c.at(-1) === "A" ? "B" : "A";
-    erro(await req("GET", "/api/me", { cookie: c.slice(0, -1) + ultimo }), 401, "último caractere da assinatura trocado");
+    erro(await req("GET", "/api/me", { cookie: adulterar(c) }), 401, "caractere da assinatura trocado");
     const [p] = c.slice("session=".length).split(".");
     erro(await req("GET", "/api/me", { cookie: `session=${p}.` }), 401, "assinatura vazia");
     erro(await req("GET", "/api/me", { cookie: `session=${p}` }), 401, "sem assinatura");
@@ -108,6 +116,22 @@ describe("Sessão", () => {
     const sigAna = C.ana.split(".")[1];
     const pBruno = C.bruno.slice("session=".length).split(".")[0];
     erro(await req("GET", "/api/me", { cookie: `session=${pBruno}.${sigAna}` }), 401, "payload do Bruno com assinatura da Ana");
+  });
+
+  test("maleabilidade: só a grafia canônica da assinatura/payload é aceita", async () => {
+    const B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    const [p, sig] = C.oreilly.slice("session=".length).split(".");
+    assert.equal(sig.length, 43);
+    assert.equal((await req("GET", "/api/me", { cookie: `session=${p}.${sig}` })).status, 200, "assinatura correta");
+    // o último caractere de 43 tem 4 bits de dado + 2 de preenchimento (os 2 bits baixos)
+    const v = B64.indexOf(sig.at(-1));
+    for (const x of [1, 2, 3]) {
+      const s2 = sig.slice(0, -1) + B64[v ^ x];
+      erro(await req("GET", "/api/me", { cookie: `session=${p}.${s2}` }), 401, `preenchimento trocado (${sig.at(-1)}→${B64[v ^ x]})`);
+    }
+    erro(await req("GET", "/api/me", { cookie: `session=${p}.${sig}=` }), 401, "assinatura com = no fim");
+    erro(await req("GET", "/api/me", { cookie: `session=${p}=.${sig}` }), 401, "payload com = no fim");
+    erro(await req("GET", "/api/me", { cookie: `session=${p}.${sig.slice(0, -1)}` }), 401, "assinatura com 42 caracteres");
   });
 
   test("assinado com outro segredo → 401", async () => {
@@ -516,11 +540,224 @@ describe("Métodos não permitidos e respostas JSON", () => {
       ["GET", "/api/lists/join"], ["DELETE", "/api/lists/1"], ["PATCH", "/api/lists/1"],
       ["GET", "/api/lists/1/tasks"], ["GET", "/api/tasks/1"], ["POST", "/api/tasks/1"], ["PUT", "/api/tasks/1"],
       ["POST", "/api/me"], ["GET", "/api/auth/logout"], ["POST", "/api/auth/discord"],
+      ["GET", "/api/lists/1/members/1"], ["POST", "/api/lists/1/members/1"], ["DELETE", "/api/lists/1/members"],
     ];
     for (const [m, p] of casos) {
       const r = await req(m, p, { cookie: C.ana, body: m === "GET" ? undefined : {} });
       erro(r, [405, 404], `${m} ${p}`);
     }
+  });
+});
+
+// =====================================================================
+describe("Edição de título (PATCH title)", () => {
+  let lista, pai, sub;
+  before(async () => {
+    lista = await novaLista(C.ana, "Edição");
+    await req("POST", "/api/lists/join", { cookie: C.bruno, body: { code: lista.shareCode } });
+    pai = await novaTarefa(C.ana, lista.id, { title: "original", assigneeId: BRUNO });
+    sub = await novaTarefa(C.ana, lista.id, { title: "sub original", parentId: pai.id });
+  });
+
+  test("PATCH title aplica trim e mantém done/assignee/parentId", async () => {
+    const r = await req("PATCH", `/api/tasks/${pai.id}`, { cookie: C.ana, body: { title: "  \t novo título  \n" } });
+    assert.equal(r.status, 200, r.text);
+    assert.equal(r.json.task.title, "novo título");
+    assert.equal(r.json.task.assignee?.id, BRUNO, "editar título apagou o responsável");
+    assert.equal(r.json.task.done, false);
+    assert.equal(r.json.task.parentId, null);
+    const rs = await req("PATCH", `/api/tasks/${sub.id}`, { cookie: C.bruno, body: { title: " sub editada " } });
+    assert.equal(rs.status, 200, rs.text);
+    assert.equal(rs.json.task.title, "sub editada");
+    assert.equal(rs.json.task.parentId, pai.id);
+  });
+
+  test("PATCH title vazio, só espaços, 201 caracteres, não-string → 400 e título preservado", async () => {
+    const casos = [["", "vazio"], ["   ", "espaços"], ["t".repeat(201), "201"], ["  " + "t".repeat(201) + "  ", "201 com espaços"], [123, "número"], [null, "null"]];
+    for (const [title, label] of casos) {
+      erro(await req("PATCH", `/api/tasks/${sub.id}`, { cookie: C.bruno, body: { title } }), 400, `sub ${label}`);
+    }
+    erro(await req("PATCH", `/api/tasks/${pai.id}`, { cookie: C.bruno, body: { title: "t".repeat(201) } }), 400, "pai 201");
+    // título inválido junto com done válido não grava nada
+    erro(await req("PATCH", `/api/tasks/${pai.id}`, { cookie: C.bruno, body: { title: "", done: true } }), 400, "title vazio + done");
+    const d = await req("GET", `/api/lists/${lista.id}`, { cookie: C.ana });
+    assert.equal(d.json.tasks.find((t) => t.id === pai.id).title, "novo título");
+    assert.equal(d.json.tasks.find((t) => t.id === pai.id).done, false, "done gravado apesar do 400");
+    assert.equal(d.json.tasks.find((t) => t.id === sub.id).title, "sub editada");
+  });
+
+  test("200 caracteres após trim são aceitos na edição", async () => {
+    const r = await req("PATCH", `/api/tasks/${pai.id}`, { cookie: C.ana, body: { title: " " + "e".repeat(200) + " " } });
+    assert.equal(r.status, 200, r.text);
+    assert.equal(r.json.task.title, "e".repeat(200));
+  });
+
+  test("novo título aparece para o outro membro", async () => {
+    const r = await req("PATCH", `/api/tasks/${pai.id}`, { cookie: C.ana, body: { title: "Título da Ana" } });
+    assert.equal(r.status, 200, r.text);
+    assert.match(r.json.task.updatedAt, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/);
+    const b = await req("GET", `/api/lists/${lista.id}`, { cookie: C.bruno });
+    assert.equal(b.status, 200);
+    const t = b.json.tasks.find((x) => x.id === pai.id);
+    assert.equal(t.title, "Título da Ana");
+    assert.equal(t.updatedAt, r.json.task.updatedAt);
+    assert.equal(b.json.tasks.find((x) => x.id === sub.id).title, "sub editada");
+  });
+
+  test("não membro não edita título", async () => {
+    erro(await req("PATCH", `/api/tasks/${pai.id}`, { cookie: C.intruso, body: { title: "invasor" } }), 404, "intruso PATCH title");
+  });
+});
+
+// =====================================================================
+describe("Membros: sair e remover (DELETE /api/lists/:id/members/:userId)", () => {
+  const rota = (listId, userId) => `/api/lists/${listId}/members/${userId}`;
+  let lista;
+  before(async () => {
+    lista = await novaLista(C.ana, "Membros");
+    for (const c of [C.bruno, C.carla]) {
+      const r = await req("POST", "/api/lists/join", { cookie: c, body: { code: lista.shareCode } });
+      assert.equal(r.status, 200, r.text);
+    }
+  });
+
+  const membros = async () => (await req("GET", `/api/lists/${lista.id}`, { cookie: C.ana })).json.members.map((m) => m.id).sort();
+
+  test("sem sessão / sessão adulterada → 401", async () => {
+    erro(await req("DELETE", rota(lista.id, BRUNO)), 401, "sem cookie");
+    erro(await req("DELETE", rota(lista.id, BRUNO), { cookie: adulterar(C.bruno) }), 401, "adulterado");
+    assert.deepEqual(await membros(), [ANA, BRUNO, CARLA]);
+  });
+
+  test("userId ou listId inválido → 404 JSON", async () => {
+    for (const u of ["abc", "-1", "1.5", "1".repeat(21), " ", "' OR 1=1 --", "999900000000000001x"]) {
+      erro(await req("DELETE", rota(lista.id, encodeURIComponent(u)), { cookie: C.ana }), 404, `userId=${u}`);
+    }
+    erro(await req("DELETE", rota("abc", BRUNO), { cookie: C.ana }), 404, "listId abc");
+    erro(await req("DELETE", rota(0, BRUNO), { cookie: C.ana }), 404, "listId 0");
+    erro(await req("DELETE", rota(987654321, ANA), { cookie: C.ana }), 404, "lista inexistente");
+    assert.deepEqual(await membros(), [ANA, BRUNO, CARLA]);
+  });
+
+  test("GET/POST/PUT/PATCH na rota de membro → 405 JSON", async () => {
+    for (const m of ["GET", "POST", "PUT", "PATCH"]) {
+      erro(await req(m, rota(lista.id, BRUNO), { cookie: C.ana, body: m === "GET" ? undefined : {} }), 405, m);
+    }
+  });
+
+  test("não membro chamando → 404 (sair ou remover), lista intacta", async () => {
+    erro(await req("DELETE", rota(lista.id, INTRUSO), { cookie: C.intruso }), 404, "intruso sai");
+    erro(await req("DELETE", rota(lista.id, BRUNO), { cookie: C.intruso }), 404, "intruso remove Bruno");
+    erro(await req("DELETE", rota(lista.id, ANA), { cookie: C.intruso }), 404, "intruso remove dono");
+    assert.deepEqual(await membros(), [ANA, BRUNO, CARLA]);
+  });
+
+  test("membro removendo outro membro → 403; membro removendo o dono → 403", async () => {
+    erro(await req("DELETE", rota(lista.id, CARLA), { cookie: C.bruno }), 403, "Bruno remove Carla");
+    erro(await req("DELETE", rota(lista.id, ANA), { cookie: C.bruno }), 403, "Bruno remove dono");
+    erro(await req("DELETE", rota(lista.id, INTRUSO), { cookie: C.bruno }), [403, 404], "Bruno remove não membro");
+    assert.deepEqual(await membros(), [ANA, BRUNO, CARLA]);
+  });
+
+  test("dono tentando sair (remover a si mesmo) → 409 e continua dono", async () => {
+    erro(await req("DELETE", rota(lista.id, ANA), { cookie: C.ana }), 409, "dono sai");
+    const d = await req("GET", `/api/lists/${lista.id}`, { cookie: C.ana });
+    assert.equal(d.status, 200);
+    assert.equal(d.json.list.role, "owner");
+    assert.equal(d.json.list.memberCount, 3);
+  });
+
+  test("dono removendo alvo que não é membro → 404", async () => {
+    erro(await req("DELETE", rota(lista.id, INTRUSO), { cookie: C.ana }), 404, "alvo não membro");
+    erro(await req("DELETE", rota(lista.id, FANTASMA), { cookie: C.ana }), 404, "alvo inexistente");
+  });
+
+  test("membro sai → 204 sem corpo, perde o acesso e some de GET /api/lists; sair de novo → 404", async () => {
+    const t = await novaTarefa(C.carla, lista.id, { title: "da Carla", assigneeId: CARLA });
+    const r = await req("DELETE", rota(lista.id, CARLA), { cookie: C.carla });
+    assert.equal(r.status, 204, r.text);
+    assert.equal(r.text, "");
+    erro(await req("GET", `/api/lists/${lista.id}`, { cookie: C.carla }), 404, "GET lista após sair");
+    erro(await req("POST", `/api/lists/${lista.id}/tasks`, { cookie: C.carla, body: { title: "x" } }), 404, "POST tarefa após sair");
+    erro(await req("PATCH", `/api/tasks/${t.id}`, { cookie: C.carla, body: { done: true } }), 404, "PATCH tarefa após sair");
+    erro(await req("DELETE", `/api/tasks/${t.id}`, { cookie: C.carla }), 404, "DELETE tarefa após sair");
+    const ls = await req("GET", "/api/lists", { cookie: C.carla });
+    assert.equal(ls.status, 200);
+    assert.ok(!ls.json.lists.some((l) => l.id === lista.id), "lista ainda aparece para quem saiu");
+    erro(await req("DELETE", rota(lista.id, CARLA), { cookie: C.carla }), 404, "sair de novo");
+    // a tarefa criada por ela continua, sem responsável
+    const d = await req("GET", `/api/lists/${lista.id}`, { cookie: C.ana });
+    const tt = d.json.tasks.find((x) => x.id === t.id);
+    assert.ok(tt, "tarefa de quem saiu foi apagada");
+    assert.equal(tt.assignee, null);
+    assert.equal(tt.done, false);
+    assert.equal(d.json.list.memberCount, 2);
+    assert.ok(!d.json.members.some((m) => m.id === CARLA));
+  });
+
+  test("dono remove membro → 204; tarefas dele ficam assignee null, demais intactas", async () => {
+    const pB = await novaTarefa(C.ana, lista.id, { title: "do Bruno", assigneeId: BRUNO });
+    const sB = await novaTarefa(C.ana, lista.id, { title: "sub do Bruno", parentId: pB.id, assigneeId: BRUNO });
+    const pA = await novaTarefa(C.ana, lista.id, { title: "da Ana", assigneeId: ANA });
+    const pN = await novaTarefa(C.bruno, lista.id, { title: "sem ninguém" });
+    await req("PATCH", `/api/tasks/${pA.id}`, { cookie: C.ana, body: { done: true } });
+    await req("PATCH", `/api/tasks/${sB.id}`, { cookie: C.bruno, body: { done: true } });
+    // Bruno também é responsável numa OUTRA lista: não pode ser afetada
+    const outra = await novaLista(C.ana, "Outra do Bruno");
+    await req("POST", "/api/lists/join", { cookie: C.bruno, body: { code: outra.shareCode } });
+    const tOutra = await novaTarefa(C.ana, outra.id, { title: "fora", assigneeId: BRUNO });
+
+    const antes = (await req("GET", `/api/lists/${lista.id}`, { cookie: C.ana })).json.tasks;
+    const r = await req("DELETE", rota(lista.id, BRUNO), { cookie: C.ana });
+    assert.equal(r.status, 204, r.text);
+    assert.equal(r.text, "");
+
+    const d = await req("GET", `/api/lists/${lista.id}`, { cookie: C.ana });
+    const por = Object.fromEntries(d.json.tasks.map((t) => [t.id, t]));
+    assert.equal(por[pB.id].assignee, null);
+    assert.equal(por[sB.id].assignee, null);
+    assert.equal(por[sB.id].parentId, pB.id);
+    assert.equal(por[sB.id].done, true);
+    assert.equal(por[pA.id].assignee?.id, ANA, "tarefa da Ana perdeu o responsável");
+    assert.equal(por[pA.id].done, true);
+    assert.equal(por[pN.id].createdBy, BRUNO);
+    assert.equal(d.json.tasks.length, antes.length, "remoção apagou tarefas");
+    for (const t of antes) {
+      assert.equal(por[t.id].title, t.title);
+      assert.equal(por[t.id].done, t.done);
+      if (t.assignee?.id !== BRUNO) assert.deepEqual(por[t.id].assignee, t.assignee, `assignee da tarefa ${t.id} mudou`);
+    }
+    assert.deepEqual(d.json.members.map((m) => m.id), [ANA]);
+    assert.equal(d.json.list.memberCount, 1);
+
+    const o = await req("GET", `/api/lists/${outra.id}`, { cookie: C.bruno });
+    assert.equal(o.status, 200, "remoção afetou outra lista");
+    assert.equal(o.json.tasks.find((t) => t.id === tOutra.id).assignee?.id, BRUNO, "assignee de outra lista foi limpo");
+
+    erro(await req("GET", `/api/lists/${lista.id}`, { cookie: C.bruno }), 404, "removido lê lista");
+    erro(await req("PATCH", `/api/tasks/${pB.id}`, { cookie: C.bruno, body: { title: "volta" } }), 404, "removido edita");
+    erro(await req("POST", `/api/lists/${lista.id}/tasks`, { cookie: C.bruno, body: { title: "x" } }), 404, "removido cria");
+    const lb = await req("GET", "/api/lists", { cookie: C.bruno });
+    assert.ok(!lb.json.lists.some((l) => l.id === lista.id), "lista ainda aparece para o removido");
+    erro(await req("DELETE", rota(lista.id, BRUNO), { cookie: C.ana }), 404, "remover de novo");
+  });
+
+  test("depois de removido, atribuir tarefa a ele → 400 (POST e PATCH)", async () => {
+    erro(await req("POST", `/api/lists/${lista.id}/tasks`, { cookie: C.ana, body: { title: "x", assigneeId: BRUNO } }), 400, "POST assignee removido");
+    const t = await novaTarefa(C.ana, lista.id, { title: "y" });
+    erro(await req("PATCH", `/api/tasks/${t.id}`, { cookie: C.ana, body: { assigneeId: BRUNO } }), 400, "PATCH assignee removido");
+    erro(await req("PATCH", `/api/tasks/${t.id}`, { cookie: C.ana, body: { assigneeId: CARLA } }), 400, "PATCH assignee que saiu");
+  });
+
+  test("removido pode reentrar com o código, como member, e volta a ter acesso", async () => {
+    const r = await req("POST", "/api/lists/join", { cookie: C.bruno, body: { code: lista.shareCode } });
+    assert.equal(r.status, 200, r.text);
+    assert.equal(r.json.list.role, "member");
+    assert.equal(r.json.list.memberCount, 2);
+    const d = await req("GET", `/api/lists/${lista.id}`, { cookie: C.bruno });
+    assert.equal(d.status, 200);
+    const t = await novaTarefa(C.ana, lista.id, { title: "de volta", assigneeId: BRUNO });
+    assert.equal(t.assignee.id, BRUNO);
   });
 });
 

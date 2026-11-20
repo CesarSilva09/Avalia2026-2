@@ -61,11 +61,16 @@
 
         <div id="listaConteudo" hidden>
           <div class="lista-topo">
-            <h2 id="listaNome" tabindex="-1"></h2>
+            <div>
+              <h2 id="listaNome" tabindex="-1"></h2>
+              <!-- Fora da região aria-live de propósito: muda a cada segundo. -->
+              <p id="sinc" class="sinc"></p>
+            </div>
             <div class="codigo">
               <span>Código de acesso:</span>
               <code id="listaCodigo"></code>
               <button type="button" class="btn-ghost" id="copiarBtn">Copiar código</button>
+              <button type="button" class="btn-ghost btn-perigo" id="sairListaBtn" hidden>Sair da lista</button>
             </div>
           </div>
 

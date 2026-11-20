@@ -156,9 +156,22 @@ progress { width: 100%; height: .9rem; accent-color: var(--primary); }
 .feita > .tarefa-linha .check span { text-decoration: line-through; color: var(--muted); }
 .resp { display: flex; align-items: center; gap: .35rem; font-size: .9rem; color: var(--muted); }
 .resp-select { width: auto; max-width: 11rem; padding: .3rem .4rem; font-size: .9rem; }
-.acoes { display: flex; gap: .4rem; }
+.acoes { display: flex; flex-wrap: wrap; gap: .4rem; }
 .sub-form { margin-top: .5rem; display: flex; gap: .5rem; }
 .sub-form input { flex: 1; }
+.edit-form { display: flex; flex-wrap: wrap; gap: .5rem; flex: 1 1 14rem; min-width: 0; }
+.edit-form input { flex: 1 1 10rem; }
+
+.sinc { font-size: .8rem; color: var(--muted); }
+.btn-mini { padding: 0 .45rem; font-size: .8rem; }
+
+/* Destaque breve do que um colega mudou */
+.tarefa-linha { border-radius: 6px; }
+.tarefa-linha.mudou, .membros li.mudou { animation: mudou 2.5s ease-out; }
+@keyframes mudou { from { background: var(--pill); } to { background: transparent; } }
+@media (prefers-reduced-motion: reduce) {
+  .tarefa-linha.mudou, .membros li.mudou { animation: none; background: var(--pill); }
+}
 
 .sr-only {
   position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;

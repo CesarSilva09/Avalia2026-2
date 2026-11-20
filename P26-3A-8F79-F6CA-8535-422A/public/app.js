@@ -11,6 +11,8 @@ let atual = null;         // { list, members, tasks } da lista aberta
 let pendentes = 0;        // requisições de alteração em andamento
 let seqCarga = 0;         // descarta respostas de recarga antigas
 const subAbertos = new Set(); // ids das tarefas com o form de subtarefa aberto
+const editAbertos = new Set(); // ids das tarefas com o título em edição
+let ultimaSinc = 0;       // Date.now() da última carga aplicada da lista aberta
 
 // ---------- API ----------
 class ApiErro extends Error {
@@ -140,24 +142,65 @@ function idDaRota() {
   return m ? Number(m[1]) : null;
 }
 
-async function carregarLista(id) {
+// periodica = recarga automática; só ela compara com o estado anterior (mudanças de colegas).
+async function carregarLista(id, periodica = false) {
   const seq = ++seqCarga;
   const data = await api("GET", `/api/lists/${id}`);
   if (seq !== seqCarga || idDaRota() !== id) return; // resposta velha
+  // Uma ação local começou durante a recarga: a recarga da própria ação é que vale.
+  if (periodica && pendentes > 0) return;
+  const { marcar, n } = periodica && atual && atual.list.id === id
+    ? mudancas(atual, data) : { marcar: new Set(), n: 0 };
   atual = data;
+  ultimaSinc = Date.now();
+  mostrarSinc();
   // Atualiza o progresso no painel sem outra requisição.
   const i = listas.findIndex((l) => l.id === data.list.id);
   if (i >= 0) listas[i] = data.list; else listas.push(data.list);
   renderListas();
-  renderLista();
+  renderLista(marcar);
+  if (n) aviso(n === 1 ? "1 alteração feita por colegas." : `${n} alterações feitas por colegas.`);
 }
 
-function renderLista() {
+// Compara duas cargas da mesma lista: chaves "t<id>"/"m<id>" a destacar e total de alterações.
+function mudancas(antes, depois) {
+  const marcar = new Set();
+  let n = 0;
+  const tAntes = new Map(antes.tasks.map((t) => [t.id, t]));
+  for (const t of depois.tasks) {
+    const a = tAntes.get(t.id);
+    if (!a || a.updatedAt !== t.updatedAt || a.done !== t.done || a.title !== t.title
+      || a.assignee?.id !== t.assignee?.id) { marcar.add(`t${t.id}`); n++; }
+    tAntes.delete(t.id);
+  }
+  n += tAntes.size; // tarefas removidas
+  const mAntes = new Set(antes.members.map((m) => m.id));
+  for (const m of depois.members) {
+    if (!mAntes.delete(m.id)) { marcar.add(`m${m.id}`); n++; }
+  }
+  return { marcar, n: n + mAntes.size }; // + membros que saíram
+}
+
+function mostrarSinc() {
+  if (!atual) return;
+  const s = Math.max(0, Math.floor((Date.now() - ultimaSinc) / 1000));
+  $("sinc").textContent = `Atualizado há ${s} s`;
+}
+
+function renderLista(marcar = new Set()) {
   const { list, members, tasks } = atual;
+  // Preserva texto e foco dos inputs de subtarefa/edição e dos botões com id recriados.
+  const ativo = document.activeElement;
+  const focoId = ativo && ativo.id && $("listaConteudo").contains(ativo) ? ativo.id : null;
+  const sel0 = focoId && ativo.type === "text" ? [ativo.selectionStart, ativo.selectionEnd] : null;
+  const valores = {};
+  $("tarefas").querySelectorAll("input[type=text]").forEach((i) => { valores[i.id] = i.value; });
+
   $("listaVazia").hidden = true;
   $("listaConteudo").hidden = false;
   $("listaNome").textContent = list.name;
   $("listaCodigo").textContent = list.shareCode;
+  $("sairListaBtn").hidden = list.role === "owner";
   document.title = `${list.name} — Shared To-Do`;
 
   const feitas = tasks.filter((t) => t.done).length;
@@ -165,8 +208,12 @@ function renderLista() {
   $("listaProgresso").max = Math.max(tasks.length, 1);
   $("listaProgresso").value = feitas;
 
-  $("membros").replaceChildren(...members.map((m) =>
-    el("li", {}, avatar(m, true), el("span", { text: m.role === "owner" ? `${m.username} (dono)` : m.username }))));
+  $("membros").replaceChildren(...members.map((m) => {
+    const li = el("li", { class: marcar.has(`m${m.id}`) ? "mudou" : "" },
+      avatar(m, true), el("span", { text: m.role === "owner" ? `${m.username} (dono)` : m.username }));
+    if (list.role === "owner" && m.id !== me.id) li.append(botaoRemover(m));
+    return li;
+  }));
 
   // Select do formulário de nova tarefa: preserva a escolha atual.
   const sel = $("novaTarefaResp");
@@ -174,20 +221,13 @@ function renderLista() {
   sel.replaceChildren(...opcoesResponsavel(members));
   if (members.some((m) => m.id === escolhido)) sel.value = escolhido;
 
-  // Preserva texto e foco dos inputs de subtarefa recriados.
-  const ativo = document.activeElement;
-  const focoId = ativo && ativo.id && $("tarefas").contains(ativo) ? ativo.id : null;
-  const sel0 = focoId && ativo.type === "text" ? [ativo.selectionStart, ativo.selectionEnd] : null;
-  const valores = {};
-  $("tarefas").querySelectorAll("input[type=text]").forEach((i) => { valores[i.id] = i.value; });
-
   const filhos = new Map();
   tasks.filter((t) => t.parentId !== null).forEach((t) => {
     if (!filhos.has(t.parentId)) filhos.set(t.parentId, []);
     filhos.get(t.parentId).push(t);
   });
   const principais = tasks.filter((t) => t.parentId === null);
-  $("tarefas").replaceChildren(...principais.map((t) => itemTarefa(t, filhos.get(t.id) || [], members)));
+  $("tarefas").replaceChildren(...principais.map((t) => itemTarefa(t, filhos.get(t.id) || [], members, marcar)));
   $("semTarefas").hidden = principais.length > 0;
 
   $("tarefas").querySelectorAll("input[type=text]").forEach((i) => {
@@ -205,7 +245,28 @@ function opcoesResponsavel(members) {
     ...members.map((m) => el("option", { value: m.id, text: m.username }))];
 }
 
-function itemTarefa(t, subs, members) {
+function botaoRemover(m) {
+  const b = el("button", { type: "button", id: `remover-${m.id}`, class: "btn-ghost btn-perigo btn-mini", text: "Remover",
+    "aria-label": `Remover ${m.username} da lista` });
+  b.addEventListener("click", () => {
+    if (!confirm(`Remover ${m.username} da lista? As tarefas atribuídas a essa pessoa ficarão sem responsável.`)) return;
+    executar([b], async () => {
+      try {
+        await api("DELETE", `/api/lists/${atual.list.id}/members/${encodeURIComponent(m.id)}`);
+      } catch (e) {
+        // 404: o alvo já saiu; redesenha para o botão antigo sumir e mostra o erro do servidor.
+        if (e.status === 404) await recarregar().catch(() => {});
+        throw e;
+      }
+      await recarregar();
+      $("listaNome").focus(); // o botão clicado sumiu; devolve o foco a um ponto estável
+      aviso(`${m.username} foi removido(a) da lista.`);
+    });
+  });
+  return b;
+}
+
+function itemTarefa(t, subs, members, marcar) {
   const li = el("li", { class: t.done ? "tarefa feita" : "tarefa" });
 
   const check = el("input", { type: "checkbox", id: `done-${t.id}`, checked: t.done });
@@ -239,9 +300,20 @@ function itemTarefa(t, subs, members) {
     });
   });
 
+  const editando = editAbertos.has(t.id);
+  const editar = el("button", { type: "button", id: `editar-${t.id}`, class: "btn-ghost", text: "Editar",
+    "aria-label": `Editar título de ${t.title}` });
+  editar.addEventListener("click", () => {
+    editAbertos.add(t.id);
+    renderLista();
+    const input = $(`edit-${t.id}`);
+    if (input) { input.focus(); input.select(); }
+  });
+
   const acoes = el("div", { class: "acoes" });
-  li.append(el("div", { class: "tarefa-linha" },
-    el("label", { class: "check", htmlFor: check.id }, check, el("span", { text: t.title })),
+  li.append(el("div", { class: marcar.has(`t${t.id}`) ? "tarefa-linha mudou" : "tarefa-linha" },
+    editando ? formEditar(t)
+      : el("label", { class: "check", htmlFor: check.id }, check, el("span", { text: t.title })),
     resp,
     el("label", { class: "sr-only", htmlFor: selId, text: `Responsável por ${t.title}` }),
     sel,
@@ -251,7 +323,9 @@ function itemTarefa(t, subs, members) {
     const abrir = el("button", { type: "button", class: "btn-ghost", text: "+ Subtarefa" });
     abrir.setAttribute("aria-expanded", String(subAbertos.has(t.id)));
     abrir.setAttribute("aria-label", `Adicionar subtarefa em ${t.title}`);
-    acoes.append(abrir, excluir);
+    acoes.append(abrir);
+    if (!editando) acoes.append(editar);
+    acoes.append(excluir);
 
     const form = formSubtarefa(t);
     form.hidden = !subAbertos.has(t.id);
@@ -266,12 +340,56 @@ function itemTarefa(t, subs, members) {
 
     if (subs.length) {
       li.append(el("ul", { class: "subtarefas", "aria-label": `Subtarefas de ${t.title}` },
-        ...subs.map((s) => itemTarefa(s, [], members))));
+        ...subs.map((s) => itemTarefa(s, [], members, marcar))));
     }
   } else {
+    if (!editando) acoes.append(editar);
     acoes.append(excluir);
   }
   return li;
+}
+
+// O input tem id fixo (edit-<id>): renderLista preserva texto e foco dele nas recargas.
+function formEditar(t) {
+  const inputId = `edit-${t.id}`;
+  const input = el("input", { type: "text", id: inputId, maxLength: 200, required: true, value: t.title });
+  const salvar = el("button", { type: "submit", class: "btn-primary", text: "Salvar",
+    "aria-label": `Salvar título de ${t.title}` });
+  const cancelar = el("button", { type: "button", class: "btn-ghost", text: "Cancelar",
+    "aria-label": `Cancelar edição de ${t.title}` });
+  const form = el("form", { class: "edit-form" },
+    el("label", { class: "sr-only", htmlFor: inputId, text: `Novo título de ${t.title}` }), input, salvar, cancelar);
+  const fechar = () => {
+    editAbertos.delete(t.id);
+    renderLista();
+    const b = $(`editar-${t.id}`);
+    if (b) b.focus();
+  };
+  cancelar.addEventListener("click", fechar);
+  input.addEventListener("keydown", (ev) => {
+    if (ev.key === "Escape") { ev.preventDefault(); fechar(); }
+  });
+  form.addEventListener("submit", (ev) => {
+    ev.preventDefault();
+    const title = input.value.trim();
+    if (!title) { aviso("O título não pode ficar vazio.", true); input.focus(); return; }
+    if (title === t.title) return fechar();
+    executar([input, salvar, cancelar], async () => {
+      try {
+        await api("PATCH", `/api/tasks/${t.id}`, { title });
+      } catch (e) {
+        // 404: um colega excluiu a tarefa; fecha a edição e redesenha.
+        if (e.status === 404) { editAbertos.delete(t.id); await recarregar().catch(() => {}); }
+        throw e;
+      }
+      editAbertos.delete(t.id);
+      await recarregar();
+    }).then((ok) => {
+      const b = ok && $(`editar-${t.id}`);
+      if (b) b.focus();
+    });
+  });
+  return form;
 }
 
 function formSubtarefa(t) {
@@ -294,9 +412,9 @@ function formSubtarefa(t) {
   return form;
 }
 
-async function recarregar() {
+async function recarregar(periodica = false) {
   const id = idDaRota();
-  if (id !== null) await carregarLista(id);
+  if (id !== null) await carregarLista(id, periodica);
 }
 
 // ---------- Rotas ----------
@@ -304,6 +422,7 @@ async function rota() {
   if (!me) return;
   const id = idDaRota();
   subAbertos.clear();
+  editAbertos.clear();
   if (id === null) {
     atual = null;
     $("listaConteudo").hidden = true;
@@ -376,6 +495,23 @@ $("copiarBtn").addEventListener("click", async () => {
   }
 });
 
+$("sairListaBtn").addEventListener("click", () => {
+  if (!atual || !confirm(`Sair da lista "${atual.list.name}"? As tarefas atribuídas a você ficarão sem responsável.`)) return;
+  const id = atual.list.id;
+  executar([$("sairListaBtn")], async () => {
+    try {
+      await api("DELETE", `/api/lists/${id}/members/${encodeURIComponent(me.id)}`);
+    } catch (e) {
+      // 404: já tinha sido removido; volta ao painel do mesmo jeito e mostra o erro do servidor.
+      if (e.status === 404) { location.hash = ""; await carregarListas().catch(() => {}); }
+      throw e;
+    }
+    location.hash = "";
+    await carregarListas();
+    aviso("Você saiu da lista.");
+  });
+});
+
 $("logoutBtn").addEventListener("click", () => executar([$("logoutBtn")], async () => {
   await api("POST", "/api/auth/logout");
   history.replaceState(null, "", "/");
@@ -390,8 +526,18 @@ setInterval(() => {
   // Um select aberto seria fechado ao redesenhar; espera o usuário terminar.
   const ativo = document.activeElement;
   if (ativo && ativo.tagName === "SELECT" && $("listaConteudo").contains(ativo)) return;
-  recarregar().catch(tratarErro);
+  const id = idDaRota();
+  recarregar(true).catch((e) => {
+    if (e.status !== 403 && e.status !== 404) return tratarErro(e);
+    if (idDaRota() !== id) return; // o usuário já saiu dessa lista por conta própria
+    // Fui removido (ou a lista sumiu): volta ao painel.
+    location.hash = "";
+    aviso("Você não é mais membro desta lista.", true);
+    carregarListas().catch(tratarErro);
+  });
 }, 5000);
+
+setInterval(mostrarSinc, 1000);
 
 // ---------- Início ----------
 (async function iniciar() {
