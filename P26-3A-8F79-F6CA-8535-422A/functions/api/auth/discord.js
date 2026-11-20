@@ -1,24 +1,21 @@
-/**
- * Cloudflare Pages Function — /api/auth/discord
- * Endpoint de autenticação OAuth2 do Discord (importa user_id, username e avatar).
- */
-export async function onRequestGet(context) {
-  const { request, env } = context;
-  const url = new URL(request.url);
+import { cookie, error } from "../../_lib.js";
 
-  if (!env.DISCORD_CLIENT_ID) {
-    return Response.json({
-      configured: false,
-      message: "Defina DISCORD_CLIENT_ID e DISCORD_CLIENT_SECRET nas variáveis do Cloudflare Pages para login real, ou utilize o perfil de sessão local durante o diagnóstico.",
-    });
+// GET /api/auth/discord → 302 para o Discord com state anti-CSRF guardado em cookie curto.
+export async function onRequestGet({ request, env }) {
+  if (!env.DISCORD_CLIENT_ID || !env.DISCORD_CLIENT_SECRET || !env.SESSION_SECRET) {
+    return error(500, "Login com Discord não configurado no servidor.");
   }
-
-  const redirectUri = new URL("/api/auth/discord/callback", url.origin).href;
-  const authorizeUrl = new URL("https://discord.com/api/oauth2/authorize");
-  authorizeUrl.searchParams.set("client_id", env.DISCORD_CLIENT_ID);
-  authorizeUrl.searchParams.set("redirect_uri", redirectUri);
-  authorizeUrl.searchParams.set("response_type", "code");
-  authorizeUrl.searchParams.set("scope", "identify");
-
-  return Response.redirect(authorizeUrl.href, 302);
+  const state = crypto.randomUUID();
+  const url = new URL("https://discord.com/oauth2/authorize");
+  url.searchParams.set("client_id", env.DISCORD_CLIENT_ID);
+  url.searchParams.set("redirect_uri", new URL("/api/auth/discord/callback", request.url).href);
+  url.searchParams.set("response_type", "code");
+  url.searchParams.set("scope", "identify");
+  url.searchParams.set("state", state);
+  return new Response(null, {
+    status: 302,
+    headers: { Location: url.href, "Set-Cookie": cookie("oauth_state", state, 600, "/api/auth") },
+  });
 }
+
+export { methodNotAllowed as onRequest } from "../../_lib.js";

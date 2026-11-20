@@ -3,48 +3,104 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Projeto #15 — P26-3A-8F79-F6CA-8535-422A</title>
+  <title>Shared To-Do — P26-3A-8F79-F6CA-8535-422A</title>
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
+  <a class="skip" href="#conteudo">Pular para o conteúdo</a>
+
   <header class="topbar">
     <div class="topbar-inner">
-      <div>
-        <strong>Projeto #15: Lista de Tarefas Colaborativa (Shared To-Do)</strong>
-      </div>
-      <div class="discord-badge" id="discordProfile">
-        <a id="discordLoginLink" href="/api/auth/discord" style="color:inherit;text-decoration:none;">
-          <span id="discordUserText">Entrar com Discord OAuth2</span>
-        </a>
+      <strong class="brand">Shared To-Do</strong>
+      <div class="profile" id="profile" hidden>
+        <img id="meAvatar" class="avatar" src="" alt="" width="32" height="32">
+        <span id="meName"></span>
+        <button type="button" class="btn-ghost" id="logoutBtn">Sair</button>
       </div>
     </div>
   </header>
 
-  <main>
-    <section class="card">
-      <span class="pill">Projeto Oficial #15</span>
-      <h1>Lista de Tarefas Colaborativa (Shared To-Do)</h1>
-      <p class="desc">Construa um gerenciador de tarefas voltado para pequenas equipes de trabalho acadêmico. Após o login via Discord, o usuário pode criar listas de tarefas e compartilhar o código de acesso da lista com colegas de turma, permitindo que múltiplos usuários autenticados visualizem e interajam com os mesmos itens. No Cloudflare D1, o esquema relacional deve contemplar tabelas para usuários, listas, membros da lista e tarefas. Através de JavaScript vanilla, os integrantes podem criar subtarefas, atribuir um responsável (exibindo o avatar do Discord do colega no item) e alterar o status de conclusão, sincronizando o estado com o servidor a cada interação.</p>
+  <main id="conteudo">
+    <div id="aviso" class="aviso" role="status" aria-live="polite"></div>
 
-      <div class="form-row">
-        <input class="input-text" id="recordInput" type="text" placeholder="Digite um registro para gravar na Cloudflare Function + D1...">
-        <button class="btn-primary" id="sendBtn" type="button">Registrar no Cloudflare D1</button>
-      </div>
-      <div id="statusMessage" style="font-size:0.88rem;font-weight:700;color:#166534;margin-bottom:0.75rem;"></div>
+    <!-- Tela deslogada -->
+    <section id="loginView" class="card login" hidden>
+      <h1>Tarefas da equipe, num lugar só</h1>
+      <p>Crie listas para os trabalhos da turma, compartilhe o código de acesso com os colegas e
+        acompanhem juntos quem faz o quê: subtarefas, responsáveis com avatar do Discord e progresso em tempo real.</p>
+      <p id="authError" class="erro" role="alert" hidden></p>
+      <a class="btn-primary btn-discord" href="/api/auth/discord">Entrar com Discord</a>
     </section>
 
-    <section class="card">
-      <h2 style="font-size:1.15rem;font-weight:800;margin-bottom:0.85rem;">Registros Persistidos (Cloudflare Pages Functions + D1)</h2>
-      <ul class="records-list" id="recordsList">
-        <li>Carregando status da API serverless...</li>
-      </ul>
-    </section>
+    <!-- Tela logada -->
+    <div id="appView" class="layout" hidden>
+      <aside class="card painel" aria-labelledby="minhasListasTitulo">
+        <h2 id="minhasListasTitulo">Minhas listas</h2>
+        <ul id="listas" class="listas"></ul>
+        <p id="semListas" class="vazio" hidden>Você ainda não participa de nenhuma lista.</p>
+
+        <form id="novaListaForm" class="mini-form">
+          <label for="novaListaNome">Nova lista</label>
+          <div class="linha">
+            <input id="novaListaNome" name="name" type="text" maxlength="80" required placeholder="Ex.: TCC — Grupo 3">
+            <button type="submit" class="btn-primary">Criar</button>
+          </div>
+        </form>
+
+        <form id="entrarForm" class="mini-form">
+          <label for="entrarCodigo">Entrar com código</label>
+          <div class="linha">
+            <input id="entrarCodigo" name="code" type="text" required autocomplete="off" autocapitalize="characters" placeholder="Ex.: K7QX9M2P">
+            <button type="submit" class="btn-primary">Entrar</button>
+          </div>
+        </form>
+      </aside>
+
+      <section id="listaView" class="card lista" aria-labelledby="listaNome">
+        <p id="listaVazia" class="vazio">Escolha uma lista ao lado, crie uma nova ou entre com um código.</p>
+
+        <div id="listaConteudo" hidden>
+          <div class="lista-topo">
+            <h2 id="listaNome" tabindex="-1"></h2>
+            <div class="codigo">
+              <span>Código de acesso:</span>
+              <code id="listaCodigo"></code>
+              <button type="button" class="btn-ghost" id="copiarBtn">Copiar código</button>
+            </div>
+          </div>
+
+          <div class="progresso">
+            <label for="listaProgresso" id="listaProgressoTexto"></label>
+            <progress id="listaProgresso" value="0" max="1"></progress>
+          </div>
+
+          <h3>Membros</h3>
+          <ul id="membros" class="membros"></ul>
+
+          <form id="novaTarefaForm" class="tarefa-form">
+            <div class="campo">
+              <label for="novaTarefaTitulo">Nova tarefa</label>
+              <input id="novaTarefaTitulo" type="text" maxlength="200" required placeholder="O que precisa ser feito?">
+            </div>
+            <div class="campo">
+              <label for="novaTarefaResp">Responsável (opcional)</label>
+              <select id="novaTarefaResp"></select>
+            </div>
+            <button type="submit" class="btn-primary">Adicionar</button>
+          </form>
+
+          <h3>Tarefas</h3>
+          <ul id="tarefas" class="tarefas"></ul>
+          <p id="semTarefas" class="vazio" hidden>Nenhuma tarefa ainda.</p>
+        </div>
+      </section>
+    </div>
   </main>
 
   <footer id="projectFooter">
     Chave Única de Auditoria: <code>P26-3A-8F79-F6CA-8535-422A</code> · Turma 3A · Licenciado sob MIT
   </footer>
 
-  <script src="/app.js"></script>
+  <script src="/app.js" defer></script>
 </body>
 </html>
